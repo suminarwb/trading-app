@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Analysis Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --border: #262b36; --text: #e6e8eb;
+    --muted: #8b92a3; --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --accent: #6366f1;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; overflow-x:hidden; }
+  header { padding: 20px 28px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;}
+  header h1 { font-size:18px; margin:0; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  .controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  input, select, button { background:#1f232d; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:14px; min-height:40px; }
+  button { background:var(--accent); border:none; cursor:pointer; font-weight:600; }
+  button:hover { opacity:0.9; }
+  #capitalInput { width:150px; }
+  #riskPercentInput { width:80px; }
+  #quantityInput { width:130px; }
+  main { padding: 24px 28px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:16px; margin-bottom:28px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; cursor:pointer; transition: border-color .15s; }
+  .card:hover { border-color: var(--accent); }
+  .card-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; }
+  .card-top h3 { margin:0; font-size:15px; }
+  .badge { flex-shrink:0; font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em;}
+  .badge.BUY { background: rgba(34,197,94,.15); color:var(--green); }
+  .badge.SELL { background: rgba(239,68,68,.15); color:var(--red); }
+  .badge.HOLD { background: rgba(245,158,11,.15); color:var(--amber); }
+  .price { font-size:20px; font-weight:700; margin: 2px 0 10px; }
+  .row { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px 12px; font-size:13px; color:var(--muted); padding:4px 0; }
+  .row b { color: var(--text); word-break:break-word; text-align:right; }
+  #detail { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:20px; display:none; }
+  #chart { height: 340px; margin-top: 14px; }
+  .reasons { margin-top:14px; font-size:13px; color:var(--muted); }
+  .reasons li { margin-bottom:4px; }
+  .warn { color: var(--amber); }
+  .disclaimer { margin-top:18px; font-size:12px; color:var(--muted); border-top:1px solid var(--border); padding-top:12px; }
+  .loading { color: var(--muted); font-size:14px; padding: 20px 0; }
+
+  @media (max-width: 700px) {
+    header { padding: 14px 16px; flex-direction:column; align-items:stretch; }
+    header h1 { font-size:16px; }
+    .controls { flex-direction:column; align-items:stretch; }
+    .controls select, .controls button,
+    #capitalInput, #riskPercentInput, #quantityInput { width:100%; }
+    main { padding: 16px; }
+    .grid { grid-template-columns: 1fr; gap:12px; }
+    #detail { padding:16px; }
+    #chart { height:260px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📊 Trading Analysis Dashboard</h1>
+    <p>Analisis teknikal otomatis — buy price, cut loss &amp; take profit</p>
+  </div>
+  <div class="controls">
+    <select id="symbolSelect"></select>
+    <select id="intervalSelect">
+      <option value="1d" selected>Daily</option>
+      <option value="1h">1 Jam</option>
+      <option value="1wk">Mingguan</option>
+    </select>
+    <input id="capitalInput" type="number" min="0" step="any" placeholder="Modal, mis. 10000000" />
+    <select id="sizingModeSelect" title="Mode perhitungan ukuran posisi">
+      <option value="risk" selected>Berdasarkan Risk %</option>
+      <option value="quantity">Berdasarkan Jumlah Lot/Unit</option>
+    </select>
+    <input id="riskPercentInput" type="number" min="0.1" max="100" step="0.1" value="1" placeholder="Risk %" title="Persentase modal yang dipertaruhkan per trade" />
+    <input id="quantityInput" type="number" min="0" step="any" placeholder="Jumlah unit" style="display:none;" />
+    <button onclick="analyzeSymbol()">Analisis</button>
+  </div>
+</header>
+
+<main>
+  <div class="loading" id="watchlistLoading">Memuat watchlist...</div>
+  <div class="grid" id="watchlistGrid"></div>
+
+  <div id="detail">
+    <div class="card-top">
+      <h3 id="detailSymbol">-</h3>
+      <span class="badge" id="detailBadge">-</span>
+    </div>
+    <div class="row"><span>Harga terakhir</span><b id="detailPrice">-</b></div>
+    <div class="row"><span>Entry / Buy</span><b id="detailEntry">-</b></div>
+    <div class="row"><span>Cut loss</span><b id="detailSL">-</b></div>
+    <div class="row"><span>Take profit</span><b id="detailTP">-</b></div>
+    <div class="row"><span>Risk : Reward</span><b id="detailRR">-</b></div>
+    <div id="positionSizing" style="display:none;">
+      <div class="row"><span>Quantity / Lot</span><b id="detailQty">-</b></div>
+      <div class="row"><span>Risk Amount</span><b id="detailRiskAmount">-</b></div>
+      <div class="row"><span>Risk %</span><b id="detailRiskPercent">-</b></div>
+      <div class="row"><span>Nilai Posisi</span><b id="detailPositionValue">-</b></div>
+      <div class="row"><span>% dari Modal</span><b id="detailPositionPct">-</b></div>
+      <ul id="detailPositionWarnings" class="warn"></ul>
+    </div>
+    <div id="chart"></div>
+    <div class="reasons">
+      <strong>Alasan sinyal:</strong>
+      <ul id="detailReasons"></ul>
+      <strong class="warn">Catatan risiko:</strong>
+      <ul id="detailWarnings" class="warn"></ul>
+    </div>
+  </div>
+
+  <p class="disclaimer">
+    ⚠️ Semua sinyal di halaman ini adalah hasil analisis teknikal otomatis (EMA, RSI, ATR, pivot point)
+    berdasarkan data historis dari Yahoo Finance. Ini <b>bukan nasihat keuangan personal</b>. Pasar dapat
+    bergerak berlawanan arah kapan saja karena faktor fundamental/berita. Selalu terapkan manajemen risiko
+    dan ukuran posisi sesuai toleransi Anda sendiri sebelum mengambil keputusan trading.
+  </p>
+</main>
+
+<script>
+const API_BASE = ""; // kosong = origin yang sama (server FastAPI menyajikan file ini juga)
+let chart, series;
+
+async function loadSymbolOptions() {
+  const select = document.getElementById("symbolSelect");
+  try {
+    const res = await fetch(`${API_BASE}/api/watchlist`);
+    const data = await res.json();
+    select.innerHTML = data.watchlist
+      .map(item => `<option value="${item.symbol}" data-market="${item.market}">${item.label} (${item.symbol})</option>`)
+      .join("");
+    updateQuantityLabel();
+  } catch (e) {
+    console.error(e);
+    select.innerHTML = `<option value="">Gagal memuat daftar simbol</option>`;
+  }
+}
+
+function updateQuantityLabel() {
+  const select = document.getElementById("symbolSelect");
+  const quantityInput = document.getElementById("quantityInput");
+  const market = select.options[select.selectedIndex]?.dataset.market;
+  quantityInput.placeholder = market === "idx" ? "Jumlah lot (1 lot=100 lembar)" : "Jumlah unit";
+}
+
+function updateSizingModeUI() {
+  const mode = document.getElementById("sizingModeSelect").value;
+  document.getElementById("riskPercentInput").style.display = mode === "risk" ? "" : "none";
+  document.getElementById("quantityInput").style.display = mode === "quantity" ? "" : "none";
+}
+
+async function loadWatchlist() {
+  const grid = document.getElementById("watchlistGrid");
+  const loading = document.getElementById("watchlistLoading");
+  try {
+    const res = await fetch(`${API_BASE}/api/watchlist/analyze`);
+    const data = await res.json();
+    loading.style.display = "none";
+    grid.innerHTML = "";
+    data.results.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "card";
+      if (item.error) {
+        card.innerHTML = `<div class="card-top"><h3>${item.label}</h3></div>
+          <p style="color:var(--red); font-size:13px;">Gagal memuat: ${item.error}</p>`;
+      } else {
+        const r = item.recommendation;
+        card.innerHTML = `
+          <div class="card-top">
+            <h3>${item.label}</h3>
+            <span class="badge ${r.signal}">${r.signal}</span>
+          </div>
+          <div class="price">${r.last_price}</div>
+          <div class="row"><span>Entry</span><b>${r.entry_price}</b></div>
+          <div class="row"><span>Cut Loss</span><b>${r.cut_loss}</b></div>
+          <div class="row"><span>Take Profit</span><b>${r.take_profit}</b></div>
+        `;
+        card.onclick = () => {
+          document.getElementById("symbolSelect").value = item.symbol;
+          showDetail(item.symbol);
+        };
+      }
+      grid.appendChild(card);
+    });
+  } catch (e) {
+    loading.textContent = "Gagal memuat watchlist. Pastikan backend (uvicorn) sedang berjalan.";
+  }
+}
+
+async function analyzeSymbol() {
+  const symbol = document.getElementById("symbolSelect").value;
+  if (!symbol) return;
+  await showDetail(symbol, document.getElementById("intervalSelect").value);
+}
+
+async function showDetail(symbol, interval = "1d") {
+  const detail = document.getElementById("detail");
+  detail.style.display = "block";
+  detail.scrollIntoView({behavior: "smooth"});
+
+  const capital = document.getElementById("capitalInput").value;
+  const sizingMode = document.getElementById("sizingModeSelect").value;
+  let url = `${API_BASE}/api/analyze?symbol=${encodeURIComponent(symbol)}&interval=${interval}`;
+  if (capital) {
+    url += `&capital=${encodeURIComponent(capital)}`;
+    if (sizingMode === "quantity") {
+      const quantity = document.getElementById("quantityInput").value;
+      if (quantity) url += `&quantity=${encodeURIComponent(quantity)}`;
+    } else {
+      const riskPercent = document.getElementById("riskPercentInput").value;
+      url += `&risk_percent=${encodeURIComponent(riskPercent || 1)}`;
+    }
+  }
+
+  let data;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const err = await res.json();
+      alert("Error: " + err.detail);
+      return;
+    }
+    data = await res.json();
+  } catch (e) {
+    console.error(e);
+    alert("Gagal mengambil data analisis. Cek koneksi ke backend.");
+    return;
+  }
+
+  const r = data.recommendation;
+  document.getElementById("detailSymbol").textContent = r.symbol;
+  const badge = document.getElementById("detailBadge");
+  badge.textContent = r.signal;
+  badge.className = "badge " + r.signal;
+  document.getElementById("detailPrice").textContent = r.last_price;
+  document.getElementById("detailEntry").textContent = r.entry_price;
+  document.getElementById("detailSL").textContent = r.cut_loss;
+  document.getElementById("detailTP").textContent = r.take_profit;
+  document.getElementById("detailRR").textContent = "1 : " + r.risk_reward_ratio;
+
+  const reasonsEl = document.getElementById("detailReasons");
+  reasonsEl.innerHTML = r.reasons.map(x => `<li>${x}</li>`).join("");
+  const warnEl = document.getElementById("detailWarnings");
+  warnEl.innerHTML = r.warnings.map(x => `<li>${x}</li>`).join("");
+
+  const posSection = document.getElementById("positionSizing");
+  const p = data.position_sizing;
+  if (p) {
+    posSection.style.display = "block";
+    document.getElementById("detailQty").textContent = p.lot_size ? `${p.quantity} lembar (${p.quantity / p.lot_size} lot)` : p.quantity;
+    document.getElementById("detailRiskAmount").textContent = p.risk_amount;
+    document.getElementById("detailRiskPercent").textContent = p.risk_percent + "%";
+    document.getElementById("detailPositionValue").textContent = p.position_value;
+    document.getElementById("detailPositionPct").textContent = p.position_value_pct_of_capital + "%";
+    document.getElementById("detailPositionWarnings").innerHTML = p.warnings.map(x => `<li>${x}</li>`).join("");
+  } else {
+    posSection.style.display = "none";
+  }
+
+  renderChart(data.candles, r);
+}
+
+let chartResizeObserver;
+
+function renderChart(candles, rec) {
+  const container = document.getElementById("chart");
+  container.innerHTML = "";
+  chart = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: container.clientHeight,
+    layout: { background: { color: "transparent" }, textColor: "#8b92a3" },
+    grid: { vertLines: { color: "#262b36" }, horzLines: { color: "#262b36" } },
+    timeScale: { borderColor: "#262b36", timeVisible: true, secondsVisible: false },
+    rightPriceScale: { borderColor: "#262b36" },
+  });
+
+  if (chartResizeObserver) chartResizeObserver.disconnect();
+  chartResizeObserver = new ResizeObserver(entries => {
+    if (!chart || !entries.length) return;
+    const { width, height } = entries[0].contentRect;
+    chart.applyOptions({ width, height });
+  });
+  chartResizeObserver.observe(container);
+  series = chart.addCandlestickSeries({
+    upColor: "#22c55e", downColor: "#ef4444",
+    borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444",
+  });
+  const formatted = candles.map(c => ({
+    time: Math.floor(new Date(c.time.replace(" ", "T") + ":00Z").getTime() / 1000),
+    open: c.open, high: c.high, low: c.low, close: c.close,
+  }));
+  series.setData(formatted);
+
+  series.createPriceLine({ price: rec.entry_price, color: "#6366f1", lineWidth: 1, title: "Entry" });
+  series.createPriceLine({ price: rec.cut_loss, color: "#ef4444", lineWidth: 1, title: "Cut Loss" });
+  series.createPriceLine({ price: rec.take_profit, color: "#22c55e", lineWidth: 1, title: "Take Profit" });
+}
+
+function restoreCapitalInputs() {
+  try {
+    const savedCapital = localStorage.getItem("capital");
+    const savedRisk = localStorage.getItem("riskPercent");
+    const savedQuantity = localStorage.getItem("quantity");
+    const savedMode = localStorage.getItem("sizingMode");
+    if (savedCapital) document.getElementById("capitalInput").value = savedCapital;
+    if (savedRisk) document.getElementById("riskPercentInput").value = savedRisk;
+    if (savedQuantity) document.getElementById("quantityInput").value = savedQuantity;
+    if (savedMode) document.getElementById("sizingModeSelect").value = savedMode;
+  } catch (e) { /* localStorage tidak tersedia, abaikan */ }
+  updateSizingModeUI();
+}
+
+function persistCapitalInputs() {
+  try {
+    localStorage.setItem("capital", document.getElementById("capitalInput").value);
+    localStorage.setItem("riskPercent", document.getElementById("riskPercentInput").value);
+    localStorage.setItem("quantity", document.getElementById("quantityInput").value);
+    localStorage.setItem("sizingMode", document.getElementById("sizingModeSelect").value);
+  } catch (e) { /* localStorage tidak tersedia, abaikan */ }
+}
+
+document.getElementById("capitalInput").addEventListener("change", persistCapitalInputs);
+document.getElementById("riskPercentInput").addEventListener("change", persistCapitalInputs);
+document.getElementById("quantityInput").addEventListener("change", persistCapitalInputs);
+document.getElementById("sizingModeSelect").addEventListener("change", () => {
+  updateSizingModeUI();
+  persistCapitalInputs();
+});
+document.getElementById("symbolSelect").addEventListener("change", updateQuantityLabel);
+
+restoreCapitalInputs();
+loadSymbolOptions();
+loadWatchlist();
+</script>
+</body>
+</html>
